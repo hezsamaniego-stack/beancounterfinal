@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bean Counter</title>
+<style>
+:root{--bg:#faf6f1;--card:#fff;--ink:#2b2118;--mut:#7a6a5c;--br:#e6dccf;--acc:#6f4e37;--bad:#b3392f;--ok:#2f7d4f}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:var(--acc);color:#fff;padding:.7rem 1rem;display:flex;flex-wrap:wrap;gap:.4rem 1.5rem;align-items:center}
+header b{font-size:1.25rem}
+nav{display:flex;flex-wrap:wrap;gap:.25rem}
+nav a{color:#fff;text-decoration:none;padding:.3rem .7rem;border-radius:6px;opacity:.85}
+nav a.on,nav a:hover{background:rgba(255,255,255,.2);opacity:1}
+main{max-width:1000px;margin:1rem auto;padding:0 1rem}
+.card{background:var(--card);border:1px solid var(--br);border-radius:10px;padding:1rem;margin-bottom:1rem}
+.top{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:.8rem}
+h1,h2{margin:.2rem 0;font-size:1.4rem}
+button,.btn{font:inherit;border:0;border-radius:6px;padding:.4rem .8rem;background:var(--acc);color:#fff;cursor:pointer;text-decoration:none;display:inline-block}
+.s{background:#efe6da;color:var(--ink)}
+.d{background:var(--bad)}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:.5rem;border-bottom:1px solid var(--br);white-space:nowrap}
+th{color:var(--mut);font-weight:600;font-size:.85rem}
+td.a{display:flex;gap:.4rem}
+form{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:.7rem}
+label{display:flex;flex-direction:column;font-size:.85rem;color:var(--mut);gap:.2rem}
+input,select{font:inherit;padding:.45rem;border:1px solid var(--br);border-radius:6px;color:var(--ink);background:#fff;width:100%}
+.fa{grid-column:1/-1;display:flex;gap:.5rem}
+.badge{background:var(--bad);color:#fff;border-radius:99px;padding:.05rem .5rem;font-size:.75rem;margin-left:.4rem}
+.st{padding:.05rem .6rem;border-radius:99px;font-size:.8rem;background:#efe6da}
+.st.Received{background:#d8efdf;color:var(--ok)}
+.st.Cancelled{background:#f3dcd9;color:var(--bad)}
+.mut{color:var(--mut)}
+.qty{width:110px}
+.flash{animation:fl 2.5s}
+@keyframes fl{0%,60%{background:#fff3c4}100%{background:transparent}}
+#toast{position:fixed;top:4.5rem;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:.6rem 1rem;border-radius:8px;display:none;max-width:90%;z-index:30}
+.modal{position:fixed;inset:0;background:rgba(43,33,24,.55);display:flex;align-items:center;justify-content:center;padding:1rem;z-index:20}
+.box{background:#fff;border-radius:12px;padding:1.2rem;max-width:520px;width:100%;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.3)}
+.box h2{margin:.2rem 0 .6rem}
+.box ul{margin:.3rem 0 .8rem;padding-left:1.2rem}
+.sup{min-width:180px}
+#alert{display:none;background:#fff3c4;color:#5c4400;border-bottom:1px solid #e6c866;padding:.6rem 1rem}
+#alert a{color:inherit;font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <b>&#9749; Bean Counter</b>
+  <nav>
+    <a href="#/bean">Beans (Supply)</a>
+    <a href="#/order-beans">Order Beans</a>
+    <a href="#/bean_order">Bean Orders</a>
+    <a href="#/supplier">Suppliers</a>
+    <a href="#/customer">Customers</a>
+  </nav>
+</header>
+<div id="alert"></div>
+<main id="app"><p class="mut">Loading...</p></main>
+<div id="toast"></div>
+<script>
+const app = document.getElementById('app'), tEl = document.getElementById('toast');
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = n => '$' + Number(n || 0).toFixed(2);
+function toast(m){ tEl.textContent = m; tEl.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => tEl.style.display = 'none', 4500); }
+async function api(m, p, b){
+  const r = await fetch('/api/' + p, {method: m, headers: {'content-type': 'application/json'}, body: b ? JSON.stringify(b) : undefined});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || 'Something went wrong');
+  return d;
+}
+// f = fields [name, label, type, required, options]; c = table columns [key, header]
+const S = {
+  supplier: {t:'Suppliers', pk:'supplier_id',
+    f:[['name','Supplier name','text',1],['contact_name','Contact person','text'],['email','Email','email'],['phone','Phone','tel']],
+    c:[['name','Supplier'],['contact_name','Contact'],['email','Email'],['phone','Phone']]},
+  bean: {t:'Beans (Supply on hand)', pk:'bean_id', hint:'Stock goes down by 0.5 kg per bean every 15 seconds while this page is open. Edit changes the numbers directly (it replaces them). To bring in more beans, use Order Beans. A red "Low" tag means stock is at or below the reorder level. The Supplier column updates when you order a bean from a different supplier, and any supplier you add on the Suppliers tab can be picked in Edit.',
+    f:[['name','Bean name','text',1],['origin_country','Origin country','text'],['roast_level','Roast','sel',0,['Light','Medium','Dark']],['supplier_id','Usual supplier','fk:supplier'],['price_per_kg','Price per kg ($)','number',1],['stock_kg','Stock on hand (kg)','number',1],['reorder_level_kg','Reorder level (kg)','number',1]],
+    c:[['name','Bean'],['origin_country','Origin'],['roast_level','Roast'],['supplier_name','Supplier'],['price_per_kg','Price / kg'],['stock_kg','On hand (kg)'],['in_transit_kg','In transit (kg)'],['reorder_level_kg','Reorder at (kg)']]},
+  customer: {t:'Customers', pk:'customer_id',
+    f:[['first_name','First name','text',1],['last_name','Last name','text',1],['email','Email','email'],['phone','Phone','tel']],
+    c:[['first_name','First name'],['last_name','Last name'],['email','Email'],['phone','Phone']]},
+  bean_order: {t:'Bean Orders (from suppliers)', pk:'bean_order_id', hint:'Orders placed from Order Beans arrive on their own in about 5 seconds and pop up a confirmation. For manual orders, open "Items" to add beans; setting the status to Received adds them to stock.',
+    f:[['supplier_id','Supplier','fk:supplier',1],['order_date','Order date','date',1],['expected_date','Expected delivery','date'],['status','Status','sel',1,['Ordered','Received','Cancelled']],['notes','Notes','text']],
+    c:[['bean_order_id','Order'],['supplier_name','Supplier'],['customer_name','Customer'],['order_date','Ordered'],['expected_date','Expected'],['status','Status'],['total','Total']]},
+  bean_order_item: {pk:'bean_order_item_id',
+    f:[['bean_id','Bean','fk:bean',1],['quantity_kg','Quantity (kg)','number',1],['price_per_kg','Price per kg ($)','number',1]],
+    c:[['bean_name','Bean'],['quantity_kg','Quantity (kg)'],['price_per_kg','Price / kg'],['line_total','Line total']]}
+};
+let flash = null, pollUntil = 0, pollT;
+let ed = null; // null = no form, 'new' = add form, otherwise id being edited
+
+const CRIT = 2; // under this many kg = "low on beans, reorder"
+const kg = v => +Number(v).toFixed(2);
+const lowBadge = b => Number(b.stock_kg) < CRIT ? '<span class="badge">Reorder now</span>' : b.low ? '<span class="badge">Low</span>' : '';
+function cell(r, c){
+  const v = r[c];
+  if (c === 'status') return `<span class="st ${esc(v)}">${esc(v)}</span>`;
+  if (['total','line_total','price_per_kg'].includes(c)) return money(v);
+  if (c === 'stock_kg') return esc(v) + lowBadge(r);
+  if (c === 'customer_name') return v ? esc(v) : '&mdash;';
+  if (c === 'bean_order_id') return `<a href="#/order/${v}">#${v}</a>`;
+  if (c === 'in_transit_kg') return Number(v) > 0 ? '<span class="st">&#128666; ' + esc(v) + '</span>' : '&mdash;';
+  return esc(v);
+}
+function table(k, rows){
+  const s = S[k];
+  const body = rows.map(r => `<tr${flash == r[s.pk] ? ' class="flash"' : ''}>${s.c.map(c => `<td>${cell(r, c[0])}</td>`).join('')}<td class="a">${
+    k === 'bean_order' ? `<a class="btn s" href="#/order/${r.bean_order_id}">Items</a>` : ''
+  }<button class="s" data-a="edit" data-id="${r[s.pk]}">Edit</button><button class="d" data-a="del" data-k="${k}" data-id="${r[s.pk]}">Delete</button></td></tr>`).join('');
+  return `<div class="card tw"><table><tr>${s.c.map(c => `<th>${c[1]}</th>`).join('')}<th></th></tr>${body || `<tr><td class="mut" colspan="9">No records yet.</td></tr>`}</table></div>`;
+}
+function form(k, fk, row, ord){
+  const s = S[k], id = row[s.pk] || '';
+  const inputs = s.f.map(([n, l, t, req, o]) => {
+    let v = row[n] ?? '', i;
+    if (!id && t === 'date' && n === 'order_date') v = new Date().toISOString().slice(0, 10);
+    if (t.startsWith('fk:')) {
+      const key = t.slice(3) + '_id';
+      i = `<select name="${n}" ${req ? 'required' : ''}><option value="">Choose...</option>${fk[n].map(x => `<option value="${x[key]}" ${x[key] == v ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>`;
+    } else if (t === 'sel') {
+      i = `<select name="${n}" ${req ? 'required' : ''}>${req ? '' : '<option value=""></option>'}${o.map(x => `<option ${x === v ? 'selected' : ''}>${x}</option>`).join('')}</select>`;
+    } else {
+      i = `<input name="${n}" type="${t}" value="${esc(v)}" ${req ? 'required' : ''} ${t === 'number' ? 'step="0.01" min="0"' : ''}>`;
+    }
+    return `<label>${l}${req ? ' *' : ''}${i}</label>`;
+  }).join('');
+  return `<div class="card"><form data-k="${k}" data-id="${id}" data-ord="${ord || ''}" data-prev="${esc(row.status || '')}">${inputs}<div class="fa"><button>${id ? 'Save changes' : 'Add'}</button><button type="button" class="s" data-a="cancel">Cancel</button></div></form></div>`;
+}
+async function fkData(k){
+  const fk = {};
+  for (const f of S[k].f) if (f[2].startsWith('fk:')) fk[f[0]] = await api('GET', f[2].slice(3));
+  return fk;
+}
+async function listPage(k){
+  const s = S[k], rows = await api('GET', k), fk = await fkData(k);
+  const row = ed && ed !== 'new' ? rows.find(r => r[s.pk] == ed) || {} : {};
+  return `<div class="top"><h1>${s.t}</h1><button data-a="new">+ Add</button></div>${s.hint ? `<p class="mut">${s.hint}</p>` : ''}${ed ? form(k, fk, row) : ''}${table(k, rows)}`;
+}
+async function orderBeansPage(){
+  const [beans, sups] = await Promise.all([api('GET', 'bean'), api('GET', 'supplier')]);
+  const opts = cur => `<option value="">Choose...</option>${sups.map(x => `<option value="${x.supplier_id}" ${x.supplier_id == cur ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}`;
+  const rows = beans.map(b => `<tr><td>${esc(b.name)}${lowBadge(b)}</td><td><select class="sup" name="s_${b.bean_id}">${opts(b.supplier_id)}</select></td><td>${money(b.price_per_kg)}</td><td>${esc(b.stock_kg)}</td><td>${cell(b, 'in_transit_kg')}</td><td><input class="qty" type="number" name="q_${b.bean_id}" min="0" step="0.5" placeholder="0"></td></tr>`).join('');
+  return `<div class="top"><h1>Order Beans</h1></div><p class="mut">Pick a supplier and type how many kg you want of each bean, then press Place order. You'll be asked who the order is for. The beans show as in transit, then arrive in supply after about 5 seconds and a confirmation pops up. ${sups.length ? 'Suppliers you add on the Suppliers tab appear in the lists below.' : '<b>You have no suppliers yet. Add one on the Suppliers tab first.</b>'}</p>
+  <div class="card"><form data-k="place_order" style="display:block"><div class="tw"><table><tr><th>Bean</th><th>Supplier</th><th>Price / kg</th><th>On hand (kg)</th><th>In transit (kg)</th><th>Order (kg)</th></tr>${rows}</table></div><div class="fa" style="margin-top:.8rem"><button>Place order</button></div></form></div>`;
+}
+// ---- popups ----
+const mEl = document.createElement('div'); mEl.className = 'modal'; mEl.style.display = 'none'; document.body.appendChild(mEl);
+const modalOpen = () => mEl.style.display !== 'none';
+let pending = null, custs = [];
+function modal(html){ mEl.innerHTML = `<div class="box" role="dialog" aria-modal="true">${html}</div>`; mEl.style.display = 'flex'; const f = mEl.querySelector('input,select,button'); if (f) f.focus(); }
+function closeModal(){ mEl.style.display = 'none'; mEl.innerHTML = ''; pending = null; }
+async function customerModal(items){
+  try { custs = await api('GET', 'customer'); } catch (x) { custs = []; }
+  pending = items;
+  modal(`<h2>Who is this order for?</h2><p class="mut">These details are saved to your Customers list (updated if they're already there) and linked to this order.</p>
+  <form id="cf"><label style="grid-column:1/-1">Existing customer (optional)<select id="cpick"><option value="">New customer...</option>${custs.map(c => `<option value="${c.customer_id}">${esc(c.first_name + ' ' + c.last_name)}</option>`).join('')}</select></label>
+  <label>First name *<input name="first_name" required></label><label>Last name *<input name="last_name" required></label>
+  <label>Email<input name="email" type="email"></label><label>Phone<input name="phone" type="tel"></label>
+  <div class="fa"><button>Confirm &amp; place order</button><button type="button" class="s" data-m="close">Cancel</button></div></form>`);
+}
+async function receivedModal(ids){
+  const orders = await api('GET', 'bean_order');
+  let html = '';
+  for (const id of ids) {
+    const o = orders.find(x => x.bean_order_id == id); if (!o) continue;
+    const items = await api('GET', 'bean_order_item?order=' + id);
+    html += `<p><b>Order #${id}</b> from ${esc(o.supplier_name)}${o.customer_name ? ' for ' + esc(o.customer_name) : ''}</p><ul>${items.map(i => `<li>${esc(i.bean_name)} &mdash; ${esc(i.quantity_kg)} kg</li>`).join('')}</ul>`;
+  }
+  if (!html) return;
+  modal(`<div style="text-align:center;font-size:2.5rem">&#9989;</div><h2 style="text-align:center">Order received!</h2>${html}<p class="mut">The beans have been added to your supply.</p><div class="fa"><button data-m="view">View supply</button><button class="s" data-m="close">OK</button></div>`);
+}
+mEl.onclick = e => {
+  const m = e.target.closest('[data-m]');
+  if (e.target === mEl || (m && m.dataset.m === 'close')) closeModal();
+  else if (m && m.dataset.m === 'reorder') { closeModal(); if (location.hash === '#/order-beans') route(); else location.hash = '#/order-beans'; }
+  else if (m && m.dataset.m === 'view') { closeModal(); if (location.hash === '#/bean') route(); else location.hash = '#/bean'; }
+};
+mEl.onchange = e => {
+  if (e.target.id !== 'cpick') return;
+  const c = custs.find(x => x.customer_id == e.target.value) || {}, f = e.target.form;
+  for (const n of ['first_name', 'last_name', 'email', 'phone']) f.elements[n].value = c[n] || '';
+};
+mEl.onsubmit = async e => {
+  e.preventDefault();
+  if (e.target.id !== 'cf') return;
+  const customer = Object.fromEntries(new FormData(e.target));
+  try {
+    const r = await api('POST', 'place_order', {items: pending, customer});
+    closeModal();
+    toast('Order placed! The beans are in transit and will arrive in about 5 seconds.');
+    r.order_ids.forEach(id => watch.add(id)); pollUntil = Date.now() + 60000;
+    await route(); poll();
+  } catch (x) { toast(x.message); }
+};
+
+// ---- low stock alerts ----
+const alerted = new Set();
+function canRefresh(){
+  const t = document.activeElement && document.activeElement.tagName;
+  return !modalOpen() && t !== 'INPUT' && t !== 'SELECT' && !ed && ![...document.querySelectorAll('input.qty')].some(i => i.value);
+}
+async function stockCheck(){
+  let beans; try { beans = await api('GET', 'bean'); } catch (x) { return; }
+  // beans already on order don't need another warning
+  const low = beans.filter(b => Number(b.stock_kg) < CRIT && Number(b.in_transit_kg) <= 0);
+  const bar = document.getElementById('alert');
+  bar.style.display = low.length ? 'block' : 'none';
+  bar.innerHTML = low.length ? `&#9888;&#65039; Low on beans (under ${CRIT} kg): ${low.map(b => `<b>${esc(b.name)}</b> (${kg(b.stock_kg)} kg)`).join(', ')}. <a href="#/order-beans">Reorder now</a>` : '';
+  for (const id of [...alerted]) if (!low.some(b => b.bean_id == id)) alerted.delete(id);
+  const fresh = low.filter(b => !alerted.has(b.bean_id));
+  if (!fresh.length || modalOpen()) return;
+  fresh.forEach(b => alerted.add(b.bean_id));
+  modal(`<div style="text-align:center;font-size:2.5rem">&#9888;&#65039;</div><h2 style="text-align:center">Low on beans!</h2><ul>${fresh.map(b => `<li><b>${esc(b.name)}</b> &mdash; only ${kg(b.stock_kg)} kg left</li>`).join('')}</ul><p class="mut">You'll need to reorder ${fresh.length > 1 ? 'these beans' : 'this bean'} before you run out.</p><div class="fa"><button data-m="reorder">Reorder now</button><button class="s" data-m="close">Later</button></div>`);
+}
+async function tick(){ if (canRefresh()) await route(); else await stockCheck(); }
+setInterval(tick, 15000); // beans are used up on the server each 15 seconds; this keeps the page in step
+
+// Watches orders just placed; when one is Received, the "Order received" popup appears.
+const watch = new Set();
+function poll(){
+  clearTimeout(pollT);
+  if (!watch.size || Date.now() >= pollUntil) return;
+  pollT = setTimeout(async () => {
+    try {
+      const orders = await api('GET', 'bean_order');
+      const got = modalOpen() ? [] : orders.filter(o => watch.has(o.bean_order_id) && o.status === 'Received').map(o => o.bean_order_id);
+      got.forEach(id => watch.delete(id));
+      if (canRefresh()) await route();
+      if (got.length) await receivedModal(got);
+    } catch (x) {}
+    poll();
+  }, 1500);
+}
+async function orderPage(id){
+  const o = (await api('GET', 'bean_order')).find(r => r.bean_order_id == id);
+  if (!o) return '<div class="card">Order not found. <a href="#/bean_order">Back to orders</a></div>';
+  const items = await api('GET', 'bean_order_item?order=' + id), fk = await fkData('bean_order_item');
+  const lock = o.status === 'Received';
+  const row = ed && ed !== 'new' ? items.find(r => r.bean_order_item_id == ed) || {} : {};
+  return `<div class="top"><h1>Bean order #${o.bean_order_id}</h1><a class="btn s" href="#/bean_order">&larr; All orders</a></div>
+  <div class="card">Supplier: <b>${esc(o.supplier_name)}</b> &middot; Ordered: ${esc(o.order_date)} &middot; Status: <span class="st ${esc(o.status)}">${esc(o.status)}</span> &middot; Total: <b>${money(o.total)}</b></div>
+  <div class="top"><h2>Items in this order</h2>${lock ? '<span class="mut">Received orders are locked.</span>' : '<button data-a="new">+ Add item</button>'}</div>
+  ${ed && !lock ? form('bean_order_item', fk, row, id) : ''}${table('bean_order_item', items)}`;
+}
+async function route(){
+  const [p, id] = (location.hash.slice(2) || 'bean').split('/');
+  const nav = p === 'order' ? 'bean_order' : p;
+  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('on', a.getAttribute('href') === '#/' + nav));
+  try {
+    if (p === 'order') app.innerHTML = await orderPage(id);
+    else if (p === 'order-beans') app.innerHTML = await orderBeansPage();
+    else if (S[p] && p !== 'bean_order_item') app.innerHTML = await listPage(p);
+    else location.hash = '#/bean';
+    flash = null;
+    stockCheck();
+  } catch (x) { app.innerHTML = '<div class="card">Could not load data: ' + esc(x.message) + '</div>'; }
+}
+app.onclick = async e => {
+  const b = e.target.closest('[data-a]'); if (!b) return;
+  const {a, id} = b.dataset;
+  if (a === 'new') { ed = 'new'; route(); }
+  else if (a === 'edit') { ed = id; route(); }
+  else if (a === 'cancel') { ed = null; route(); }
+  else if (a === 'del') {
+    if (!confirm('Delete this record?')) return;
+    try { await api('DELETE', b.dataset.k + '/' + id); toast('Deleted'); route(); } catch (x) { toast(x.message); }
+  }
+};
+app.onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target, k = f.dataset.k, id = f.dataset.id, d = Object.fromEntries(new FormData(f));
+  if (k === 'place_order') {
+    const items = [...f.querySelectorAll('input[name^="q_"]')].filter(i => Number(i.value) > 0).map(i => {
+      const bid = i.name.slice(2);
+      return {bean_id: bid, quantity_kg: i.value, supplier_id: f.querySelector(`select[name="s_${bid}"]`).value};
+    });
+    if (!items.length) return toast('Enter a quantity for at least one bean.');
+    if (items.some(i => !i.supplier_id)) return toast('Choose a supplier for each bean you are ordering.');
+    await customerModal(items);
+    return;
+  }
+  if (f.dataset.ord) d.bean_order_id = f.dataset.ord;
+  try { const r = await api(id ? 'PUT' : 'POST', k + (id ? '/' + id : ''), d); flash = r[S[k].pk]; ed = null; toast('Saved'); window.scrollTo(0, 0); await route(); if (k === 'bean_order' && id && r.status === 'Received' && f.dataset.prev !== 'Received') await receivedModal([r.bean_order_id]); } catch (x) { toast(x.message); }
+};
+addEventListener('hashchange', () => { ed = null; route(); });
+route();
+</script>
+</body>
+</html>
